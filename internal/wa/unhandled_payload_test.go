@@ -221,3 +221,17 @@ func TestParseLiveMessageExtractsAlbumMessage(t *testing.T) {
 		t.Fatalf("expected no unhandled payload, got %q", pm.UnhandledPayload)
 	}
 }
+
+// A protocolMessage of a type we don't extract (ephemeral setting, keep-in-chat,
+// ...) must say which type it was: «protocolMessage» alone can't tell a lost
+// edit from a harmless setting change (cofoundy-toolkit#186).
+func TestMarkUnhandledPayloadNamesProtocolSubtype(t *testing.T) {
+	pm := ParseLiveMessage(liveEvent(&waProto.Message{
+		ProtocolMessage: &waProto.ProtocolMessage{
+			Type: waProto.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
+		},
+	}))
+	if pm.UnhandledPayload != "protocolMessage:EPHEMERAL_SETTING" {
+		t.Fatalf("expected protocolMessage:EPHEMERAL_SETTING, got %q", pm.UnhandledPayload)
+	}
+}

@@ -198,6 +198,10 @@ func markUnhandledPayload(m *waProto.Message, pm *ParsedMessage) {
 		switch fd.Name() {
 		case "messageContextInfo":
 			return true
+		case "protocolMessage":
+			// The type tells a lost edit from a harmless setting change.
+			names = append(names, "protocolMessage:"+m.GetProtocolMessage().GetType().String())
+			return true
 		}
 		names = append(names, string(fd.Name()))
 		return true
