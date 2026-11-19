@@ -284,6 +284,51 @@ func TestMessagesEditDelegatesThroughSendSocketWhenStoreLocked(t *testing.T) {
 	}
 }
 
+func TestMessagesRevokeDelegatesThroughSendSocketWhenStoreLocked(t *testing.T) {
+	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
+	storeDir := shortPresenceDelegateStoreDir(t)
+	lk, err := lock.Acquire(storeDir)
+	if err != nil {
+		t.Fatalf("lock store: %v", err)
+	}
+	defer lk.Release()
+
+	server := startPresenceDelegateTestSocket(t, storeDir, func(req sendDelegateRequest) sendDelegateResponse {
+		return sendDelegateResponse{
+			OK: true, Sent: true, To: "123@s.whatsapp.net", ID: "sent-id", Target: req.ID,
+		}
+	})
+	defer server.stop()
+
+	stdout, stderr, err := runPresenceDelegateHelper(t, []string{
+		"--store", storeDir, "--json", "--timeout", "750ms",
+		"messages", "revoke", "--chat", "123@s.whatsapp.net", "--id", "ABC",
+		"--post-send-wait", "25ms",
+	})
+	if err != nil {
+		t.Fatalf("messages revoke failed: %v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+
+	req := server.nextRequest(t)
+	if req.Version != sendDelegateVersion || req.Kind != "revoke" {
+		t.Fatalf("delegate version/kind = %d/%q", req.Version, req.Kind)
+	}
+	if req.To != "123@s.whatsapp.net" || req.ID != "ABC" {
+		t.Fatalf("delegate revoke target = %+v", req)
+	}
+	if req.PostSendWaitMS != 25 {
+		t.Fatalf("delegate post-send wait = %dms", req.PostSendWaitMS)
+	}
+	if strings.Contains(stderr, "store is locked") {
+		t.Fatalf("delegated command tried the direct store path: stderr=%q", stderr)
+	}
+	for _, want := range []string{`"revoked":true`, `"id":"sent-id"`, `"target":"ABC"`} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout %q missing %s", stdout, want)
+		}
+	}
+}
+
 func TestSendFileDelegatesMediaAsThroughSendSocketWhenStoreLocked(t *testing.T) {
 	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
 	storeDir := shortPresenceDelegateStoreDir(t)
@@ -341,6 +386,20 @@ func TestExecuteDelegatedSendAcceptsEditKind(t *testing.T) {
 	})
 	if err != nil && strings.Contains(err.Error(), "unsupported send kind") {
 		t.Fatalf("edit rejected as unsupported kind: %v", err)
+	}
+}
+
+func TestExecuteDelegatedSendAcceptsRevokeKind(t *testing.T) {
+	// Reaching app use proves the daemon dispatcher recognized the revoke kind.
+	defer func() { _ = recover() }()
+	_, err := executeDelegatedSend(context.Background(), nil, sendDelegateRequest{
+		Version: sendDelegateVersion,
+		Kind:    "revoke",
+		To:      "123@s.whatsapp.net",
+		ID:      "ABC",
+	})
+	if err != nil && strings.Contains(err.Error(), "unsupported send kind") {
+		t.Fatalf("revoke rejected as unsupported kind: %v", err)
 	}
 }
 

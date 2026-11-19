@@ -162,6 +162,27 @@ func newMessagesRevokeCmd(flags *rootFlags) *cobra.Command {
 
 			a, lk, err := newApp(ctx, flags, true, false)
 			if err != nil {
+				resp, delegated, delegateErr := tryDelegateSend(ctx, flags, err, sendDelegateRequest{
+					Kind:           "revoke",
+					To:             chat,
+					ID:             id,
+					PostSendWaitMS: durationMillis(postSendWait),
+				})
+				if delegated {
+					if delegateErr != nil {
+						return delegateErr
+					}
+					if flags.asJSON {
+						return out.WriteJSON(os.Stdout, map[string]any{
+							"revoked": true,
+							"to":      resp.To,
+							"id":      resp.ID,
+							"target":  resp.Target,
+						})
+					}
+					fmt.Fprintf(os.Stdout, "Revoked message %s in %s (id %s)\n", resp.Target, resp.To, resp.ID)
+					return nil
+				}
 				return err
 			}
 			defer closeApp(a, lk)

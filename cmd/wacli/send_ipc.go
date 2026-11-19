@@ -409,6 +409,8 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 		return executeDelegatedPresenceSubscribe(ctx, a, req)
 	case "edit":
 		return executeDelegatedEdit(ctx, a, req)
+	case "revoke":
+		return executeDelegatedRevoke(ctx, a, req)
 	case markReadKind:
 		return executeDelegatedMarkRead(ctx, a, req)
 	case markReadThroughKind:
@@ -580,6 +582,40 @@ func executeDelegatedEdit(ctx context.Context, a *app.App, req sendDelegateReque
 	}
 	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
 	return sendDelegateResponse{OK: true, Sent: true, To: chatJID.String(), ID: string(sentID), Target: msg.MsgID}, nil
+}
+
+// executeDelegatedRevoke deletes one of the account's messages for everyone through the
+// running sync's connection, so `messages revoke` works while `sync --follow` holds the store.
+func executeDelegatedRevoke(ctx context.Context, a *app.App, req sendDelegateRequest) (sendDelegateResponse, error) {
+	msg, chatJID, found, err := loadMessageRevokeTarget(ctx, a, req.To, req.ID)
+	if err != nil {
+		return sendDelegateResponse{}, err
+	}
+	if found {
+		if err := validateMessageCanRevoke(msg); err != nil {
+			return sendDelegateResponse{}, err
+		}
+	}
+	if err := warnRapidSendIfNeeded(a.StoreDir(), time.Now().UTC(), os.Stderr); err != nil {
+		return sendDelegateResponse{}, err
+	}
+	targetID := req.ID
+	if found {
+		targetID = msg.MsgID
+	}
+	sentID, err := runSendOperation(ctx, reconnectForSend(a), func(ctx context.Context) (types.MessageID, error) {
+		return a.WA().RevokeMessage(ctx, chatJID, types.MessageID(targetID))
+	})
+	if err != nil {
+		return sendDelegateResponse{}, err
+	}
+	if found {
+		if err := a.DB().MarkMessageRevoked(msg.ChatJID, msg.MsgID); err != nil {
+			return sendDelegateResponse{}, fmt.Errorf("store deleted message state: %w", err)
+		}
+	}
+	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
+	return sendDelegateResponse{OK: true, Sent: true, To: chatJID.String(), ID: string(sentID), Target: targetID}, nil
 }
 
 func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateRequest) (sendDelegateResponse, error) {
